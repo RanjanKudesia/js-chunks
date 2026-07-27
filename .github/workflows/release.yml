@@ -10,6 +10,15 @@ jobs:
   publish:
     name: Publish to npm
     runs-on: ubuntu-latest
+    # OIDC Trusted Publishing (no NPM_TOKEN secret): npm auth'd via a short-lived
+    # token GitHub mints for this run. Requires the package to already exist on
+    # npm with a Trusted Publisher configured (npmjs.com -> package -> Settings ->
+    # Trusted Publisher -> GitHub Actions -> this org/repo/workflow file). The
+    # very first publish of a brand-new package must be done manually once
+    # (`npm login` + `npm publish`) before this workflow can be used.
+    permissions:
+      contents: read
+      id-token: write   # required for OIDC trusted publishing
     steps:
       - uses: actions/checkout@v4
 
@@ -23,8 +32,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           registry-url: "https://registry.npmjs.org"
+
+      - name: Update npm
+        # Trusted publishing needs npm >= 11.5.1; setup-node's bundled npm may lag.
+        run: npm install -g npm@latest
 
       - name: Install deps
         run: npm ci
@@ -38,7 +51,6 @@ jobs:
         run: npm test
 
       - name: Publish
-        # Set an npm automation token as the NPM_TOKEN repo secret.
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # No token: authenticates via OIDC trusted publishing (see permissions
+        # above). Provenance is attested automatically under trusted publishing.
+        run: npm publish
