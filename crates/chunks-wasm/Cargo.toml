@@ -1,0 +1,29 @@
+[package]
+name = "chunks-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "wasm-bindgen bindings for the rs-chunks document chunking engine"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The engine, without native-only PDF (liteparse/PDFium/tokio). PDF is composed
+# host-side via @llamaindex/liteparse-wasm and fed to chunk_pdf_markdown.
+# Vendored INSIDE this package (crates/rs-chunks) so chunks-js builds standalone —
+# no external sibling folder required. Keep in sync with the upstream rs-chunks crate.
+rs-chunks = { path = "../rs-chunks", default-features = false }
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+serde-wasm-bindgen = "0.6"
+serde = "1"
+serde_json = "1"
+console_error_panic_hook = { version = "0.1", optional = true }
+
+[features]
+default = ["console_error_panic_hook"]
+
+[profile.release]
+opt-level = "s"
+lto = true

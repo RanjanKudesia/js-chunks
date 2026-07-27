@@ -1,0 +1,16 @@
+# Node
+node_modules/
+*.tsbuildinfo
+
+# Rust build artifacts (wasm crate + vendored engine)
+target/
+crates/*/target/
+
+# Editor / OS
+.DS_Store
+*.swp
+
+# NOTE: dist/ and pkg-node|web|bundler/ are intentionally NOT ignored — they are
+# the package's shipped product (npm publishes them via package.json "files", and
+# committing them lets a fresh clone run without a Rust toolchain). They are
+# rebuilt from source by `npm run build:wasm && npm run build`.

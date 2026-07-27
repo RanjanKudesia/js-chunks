@@ -1,0 +1,67 @@
+{
+  "name": "js-chunks",
+  "version": "0.1.0",
+  "description": "Idiomatic TypeScript/JS wrapper around a WASM-backed Rust document chunking engine for RAG — 36 file formats, images, and PDF; runs on Node, Bun, Deno, and browsers.",
+  "type": "module",
+  "author": "Ranjan Kudesia <ranjan.kudesia@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RanjanKudesia/js-chunks.git"
+  },
+  "homepage": "https://github.com/RanjanKudesia/js-chunks#readme",
+  "bugs": {
+    "url": "https://github.com/RanjanKudesia/js-chunks/issues"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "pkg-node",
+    "pkg-web",
+    "pkg-bundler",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build:wasm": "wasm-pack build crates/chunks-wasm --target nodejs --out-dir ../../pkg-node --out-name chunks_wasm && wasm-pack build crates/chunks-wasm --target web --out-dir ../../pkg-web --out-name chunks_wasm && wasm-pack build crates/chunks-wasm --target bundler --out-dir ../../pkg-bundler --out-name chunks_wasm && rm -f pkg-node/.gitignore pkg-web/.gitignore pkg-bundler/.gitignore",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build:wasm && npm run build && npm run test"
+  },
+  "//": "WASM artifacts (pkg-node / pkg-web / pkg-bundler) are built via `npm run build:wasm` (requires the Rust toolchain + wasm-pack). PDF support needs the optional peer dep @llamaindex/liteparse-wasm.",
+  "peerDependencies": {
+    "@llamaindex/liteparse-wasm": "^2.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@llamaindex/liteparse-wasm": {
+      "optional": true
+    }
+  },
+  "keywords": [
+    "chunking",
+    "rag",
+    "documents",
+    "wasm",
+    "markdown",
+    "docx",
+    "text-splitting"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
