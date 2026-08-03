@@ -1,7 +1,10 @@
 # js-chunks
 
+> **Part of [chunk-engine](https://github.com/RanjanKudesia/chunk-engine)** — one Rust engine, three byte-identical SDKs ([py-chunks](https://pypi.org/project/py-chunks/) · [js-chunks](https://www.npmjs.com/package/js-chunks) · [rs-chunks](https://crates.io/crates/rs-chunks)).
+> Docs, playground and benchmarks: **[chunkengine.dev](https://www.chunkengine.dev)** — and a ⭐ on the [hub repo](https://github.com/RanjanKudesia/chunk-engine) helps a lot.
+
 Idiomatic TypeScript/JavaScript wrapper around the WASM-backed
-[`rs-chunks`](../rs-chunks) document chunking engine. Output matches the
+[`rs-chunks`](https://github.com/RanjanKudesia/rs-chunks) document chunking engine. Output matches the
 **py-chunks / rs-chunks** reference engine exactly — this package is a thin,
 ergonomic layer over the same WASM core.
 
