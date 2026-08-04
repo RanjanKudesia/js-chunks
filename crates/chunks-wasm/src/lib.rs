@@ -124,6 +124,16 @@ pub fn chunk_pdf_markdown(
     to_js(&chunks)
 }
 
+/// Apply the engine's PDF-markdown normalisation to host-parsed markdown.
+///
+/// `chunkPdfMarkdown` already does this internally, so chunks agree across SDKs
+/// without any help. `getMarkdown` returns the host parser's string directly,
+/// which would otherwise skip it — this is what keeps the two in step.
+#[wasm_bindgen(js_name = normalizePdfMarkdown)]
+pub fn normalize_pdf_markdown(markdown: &str) -> String {
+    chunks_rs::formats::pdf::author_block::normalize(markdown)
+}
+
 /// Parse a JS `{ name: string, data: Uint8Array }[]` into `Vec<(String, Vec<u8>)>`.
 fn js_to_images(value: &JsValue) -> Result<Vec<(String, Vec<u8>)>, JsValue> {
     let arr: js_sys::Array = value.clone().dyn_into().map_err(|_| JsValue::from_str("images must be an array"))?;

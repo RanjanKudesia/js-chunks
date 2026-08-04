@@ -221,7 +221,10 @@ export async function getMarkdown(source, opts = {}) {
     const wasm = await loadWasm();
     if (ext === "pdf") {
         const conv = await pdfToMarkdown(data, opts.listImages === true);
-        return opts.listImages ? { markdown: conv.markdown, images: conv.images } : conv.markdown;
+        // getChunks normalises inside the engine; do the same here so getMarkdown
+        // returns the identical string the other SDKs do.
+        const markdown = wasm.normalizePdfMarkdown(conv.markdown);
+        return opts.listImages ? { markdown, images: conv.images } : markdown;
     }
     if (opts.listImages) {
         const raw = wasm.getMarkdownWithImages(data, filename);

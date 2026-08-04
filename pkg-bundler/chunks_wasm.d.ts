@@ -140,4 +140,13 @@ export function getMarkdown(data: Uint8Array, filename: string): string;
  */
 export function getMarkdownWithImages(data: Uint8Array, filename: string): any;
 
+/**
+ * Apply the engine's PDF-markdown normalisation to host-parsed markdown.
+ *
+ * `chunkPdfMarkdown` already does this internally, so chunks agree across SDKs
+ * without any help. `getMarkdown` returns the host parser's string directly,
+ * which would otherwise skip it — this is what keeps the two in step.
+ */
+export function normalizePdfMarkdown(markdown: string): string;
+
 export function parse_rtf(rtf: string): RtfDocument;
