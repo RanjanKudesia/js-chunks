@@ -96,17 +96,16 @@ Formats without embedded images return an empty `images` array.
 
 ## PDF
 
-PDF is parsed to Markdown host-side by the optional peer dependency
-[`@llamaindex/liteparse-wasm`](https://www.npmjs.com/package/@llamaindex/liteparse-wasm)
-(the same liteparse version the Rust engine uses, so output stays identical),
-then chunked by the engine:
+PDF is parsed by the engine itself, in WASM — no peer dependency, and the same
+code `py-chunks` and `rs-chunks` run. Over the 24-document PDF corpus, markdown,
+chunks and image bytes are identical to `py-chunks` on **23 of 24**.
 
-```bash
-npm install @llamaindex/liteparse-wasm
-```
+The exception is rendering: a scanned PDF with no text *and* no embedded page
+image is rasterised natively, which WASM cannot do, so it reports that it has no
+extractable text instead.
 
 If you already have PDF markdown from another parser, chunk it directly with
-`chunkPdfMarkdown(markdown, totalPages, opts?)` — no peer dependency needed.
+`chunkPdfMarkdown(markdown, totalPages, opts?)`.
 
 ## Runtimes
 

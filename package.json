@@ -37,15 +37,7 @@
     "test:watch": "vitest",
     "prepublishOnly": "npm run build:wasm && npm run build && npm run test"
   },
-  "//": "WASM artifacts (pkg-node / pkg-web / pkg-bundler) are built via `npm run build:wasm` (requires the Rust toolchain + wasm-pack). PDF support needs the optional peer dep @llamaindex/liteparse-wasm.",
-  "peerDependencies": {
-    "@llamaindex/liteparse-wasm": "^2.9.0"
-  },
-  "peerDependenciesMeta": {
-    "@llamaindex/liteparse-wasm": {
-      "optional": true
-    }
-  },
+  "//": "WASM artifacts (pkg-node / pkg-web / pkg-bundler) are built via `npm run build:wasm` (requires the Rust toolchain + wasm-pack). PDF is parsed by the engine itself — there is no optional peer dependency.",
   "keywords": [
     "chunking",
     "rag",

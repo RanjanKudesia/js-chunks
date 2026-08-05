@@ -9,10 +9,11 @@
  *   wasm-pack build --target web      -> pkg-web    (browser / Deno)
  *   wasm-pack build --target bundler  -> pkg        (bundlers)
  *
- * PDF is not compiled into the wasm engine (no PDFium). Instead a `.pdf` source
- * is parsed to Markdown host-side by the optional peer dependency
- * `@llamaindex/liteparse-wasm`, then fed to the engine's PDF-markdown chunker —
- * exactly mirroring how rs-chunks composes PDF markdown.
+ * PDF is parsed by the engine itself, in wasm, exactly as py-chunks and
+ * rs-chunks parse it — there is no host-side PDF parser and no optional peer
+ * dependency any more. The one thing wasm cannot do is *render* a page, so a
+ * scanned PDF with no extractable text reports that rather than returning page
+ * rasters (see the PDF notes in the README).
  */
 export interface Chunk {
     content: string;
@@ -81,8 +82,10 @@ export declare function getMarkdown(source: ChunkSource, opts: ChunkOptions & {
  */
 export declare function streamChunks(source: ChunkSource, opts?: ChunkOptions): AsyncGenerator<Chunk, void, unknown>;
 /**
- * Chunk Markdown that was produced host-side for a PDF (e.g. by a separate PDF
- * parser). `totalPages` populates `document_metadata.total_pages`.
+ * Chunk Markdown that some *other* PDF parser produced. `.pdf` input is parsed
+ * by the engine itself — this is for callers who already have markdown of their
+ * own and want it chunked the same way. `totalPages` populates
+ * `document_metadata.total_pages`.
  */
 export declare function chunkPdfMarkdown(markdown: string, totalPages: number, opts?: ChunkOptions): Promise<Chunk[]>;
 //# sourceMappingURL=index.d.ts.map

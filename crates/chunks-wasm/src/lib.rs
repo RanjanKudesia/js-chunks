@@ -10,6 +10,23 @@ fn err_to_js<E: std::fmt::Display>(e: E) -> JsValue {
     JsValue::from_str(&e.to_string())
 }
 
+/// An engine error as the *message* py-chunks raises, without the variant
+/// prefix `Display` adds.
+///
+/// `ChunkError`'s `Display` writes `parse error: …`, and py-chunks maps the
+/// variant onto an exception *type* and raises the bare message. Using `Display`
+/// here made every failure read differently in JavaScript than in Python for
+/// the same file — the [#78](TECH_DEBT.md)/[#79](TECH_DEBT.md) pattern, one
+/// level up, and invisible to every parity harness until the PDF js↔py sweep
+/// went looking for it.
+fn engine_err_to_js(e: chunks_rs::ChunkError) -> JsValue {
+    use chunks_rs::ChunkError::*;
+    JsValue::from_str(&match e {
+        Unsupported(m) | InvalidArg(m) | Parse(m) => m,
+        Io(e) => e.to_string(),
+    })
+}
+
 /// Serialize to JS with maps rendered as plain objects (so `chunk.metadata` is a
 /// JS object like py-chunks' dict, not an ES `Map`).
 fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
@@ -45,14 +62,15 @@ pub fn get_chunks(
     let chunks = chunks_rs::get_chunks_from_bytes(
         data, filename, mode, window_size, overlap, sentences_per_chunk, paragraphs_per_page,
     )
-    .map_err(err_to_js)?;
+    .map_err(engine_err_to_js)?;
     to_js(&chunks)
 }
 
 /// Convert a document from raw bytes to Markdown.
 #[wasm_bindgen(js_name = getMarkdown)]
 pub fn get_markdown(data: &[u8], filename: &str) -> Result<String, JsValue> {
-    chunks_rs::get_markdown_from_bytes(data, filename).map_err(err_to_js)
+    chunks_rs::get_markdown_from_bytes(data, filename)
+    .map_err(engine_err_to_js)
 }
 
 /// Build a JS array of `{ name: string, data: Uint8Array }` from extracted images.
@@ -85,7 +103,7 @@ pub fn get_chunks_with_images(
     let (chunks, images) = chunks_rs::get_chunks_with_images_from_bytes(
         data, filename, mode, window_size, overlap, sentences_per_chunk, paragraphs_per_page,
     )
-    .map_err(err_to_js)?;
+    .map_err(engine_err_to_js)?;
     let obj = js_sys::Object::new();
     js_sys::Reflect::set(&obj, &JsValue::from_str("chunks"), &to_js(&chunks)?)?;
     js_sys::Reflect::set(&obj, &JsValue::from_str("images"), &images_to_js(images)?)?;
@@ -97,7 +115,8 @@ pub fn get_chunks_with_images(
 #[wasm_bindgen(js_name = getMarkdownWithImages)]
 pub fn get_markdown_with_images(data: &[u8], filename: &str) -> Result<JsValue, JsValue> {
     let (markdown, images) =
-        chunks_rs::get_markdown_with_images_from_bytes(data, filename).map_err(err_to_js)?;
+        chunks_rs::get_markdown_with_images_from_bytes(data, filename)
+    .map_err(engine_err_to_js)?;
     let obj = js_sys::Object::new();
     js_sys::Reflect::set(&obj, &JsValue::from_str("markdown"), &JsValue::from_str(&markdown))?;
     js_sys::Reflect::set(&obj, &JsValue::from_str("images"), &images_to_js(images)?)?;
@@ -120,7 +139,7 @@ pub fn chunk_pdf_markdown(
     let chunks = chunks_rs::formats::pdf::chunk_pdf_markdown(
         markdown, total_pages, mode, window_size, overlap, sentences_per_chunk, paragraphs_per_page,
     )
-    .map_err(err_to_js)?;
+    .map_err(engine_err_to_js)?;
     to_js(&chunks)
 }
 
@@ -168,7 +187,7 @@ pub fn chunk_pdf_markdown_with_images(
     let (chunks, out_images) = chunks_rs::formats::pdf::chunk_pdf_markdown_with_images(
         markdown, imgs, total_pages, mode, window_size, overlap, sentences_per_chunk, paragraphs_per_page,
     )
-    .map_err(err_to_js)?;
+    .map_err(engine_err_to_js)?;
     let obj = js_sys::Object::new();
     js_sys::Reflect::set(&obj, &JsValue::from_str("chunks"), &to_js(&chunks)?)?;
     js_sys::Reflect::set(&obj, &JsValue::from_str("images"), &images_to_js(out_images)?)?;

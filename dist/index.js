@@ -9,10 +9,11 @@
  *   wasm-pack build --target web      -> pkg-web    (browser / Deno)
  *   wasm-pack build --target bundler  -> pkg        (bundlers)
  *
- * PDF is not compiled into the wasm engine (no PDFium). Instead a `.pdf` source
- * is parsed to Markdown host-side by the optional peer dependency
- * `@llamaindex/liteparse-wasm`, then fed to the engine's PDF-markdown chunker —
- * exactly mirroring how rs-chunks composes PDF markdown.
+ * PDF is parsed by the engine itself, in wasm, exactly as py-chunks and
+ * rs-chunks parse it — there is no host-side PDF parser and no optional peer
+ * dependency any more. The one thing wasm cannot do is *render* a page, so a
+ * scanned PDF with no extractable text reports that rather than returning page
+ * rasters (see the PDF notes in the README).
  */
 const DEFAULTS = {
     mode: "default",
@@ -62,11 +63,6 @@ function basename(p) {
     const norm = p.replace(/\\/g, "/");
     const idx = norm.lastIndexOf("/");
     return idx >= 0 ? norm.slice(idx + 1) : norm;
-}
-function extOf(filename) {
-    const base = basename(filename);
-    const dot = base.lastIndexOf(".");
-    return dot >= 0 ? base.slice(dot + 1).toLowerCase() : "";
 }
 function isArrayBuffer(v) {
     return (typeof ArrayBuffer !== "undefined" &&
@@ -136,78 +132,10 @@ function resolveOpts(opts) {
         paragraphsPerPage: opts.paragraphsPerPage ?? DEFAULTS.paragraphsPerPage,
     };
 }
-let _liteparse;
-async function loadLiteParse() {
-    if (_liteparse)
-        return _liteparse;
-    let mod;
-    try {
-        mod = (await import(
-        /* @vite-ignore */ "@llamaindex/liteparse-wasm"));
-    }
-    catch {
-        throw new Error("PDF support requires the optional peer dependency '@llamaindex/liteparse-wasm'. " +
-            "Install it with: npm install @llamaindex/liteparse-wasm");
-    }
-    if (typeof mod.default === "function") {
-        try {
-            // Browser / bundler / Deno: instantiate by fetching the bundled wasm.
-            await mod.default();
-        }
-        catch {
-            // Node fallback: the web build cannot fetch; feed the wasm bytes directly.
-            const { createRequire } = await import("node:module");
-            const require = createRequire(import.meta.url);
-            const wasmPath = require.resolve("@llamaindex/liteparse-wasm/liteparse_wasm_bg.wasm");
-            const fs = require("node:fs");
-            const bytes = new Uint8Array(fs.readFileSync(wasmPath));
-            await mod.default({ module_or_path: bytes });
-        }
-    }
-    _liteparse = mod;
-    return mod;
-}
-/**
- * Parse a PDF's bytes to Markdown, mirroring rs-chunks' liteparse composition:
- * pages' markdown are `trimEnd`ed, empties dropped, and joined by `\n\n---\n\n`.
- * Images (when requested) are keyed `image_{id}.png` to match the `![](…)` refs.
- */
-async function pdfToMarkdown(data, embedImages) {
-    const mod = await loadLiteParse();
-    const parser = new mod.LiteParse({
-        ocrEnabled: false,
-        outputFormat: "markdown",
-        imageMode: embedImages ? "embed" : "placeholder",
-        quiet: true,
-    });
-    const result = await parser.parse(data);
-    const totalPages = result.pages.length;
-    const markdown = result.pages
-        .map((p) => p.markdown.trimEnd())
-        .filter((m) => m !== "")
-        .join("\n\n---\n\n");
-    const images = embedImages
-        ? result.images.map((img) => ({
-            name: `image_${img.id}.png`,
-            data: img.bytes instanceof Uint8Array ? img.bytes : new Uint8Array(img.bytes),
-        }))
-        : [];
-    return { markdown, totalPages, images };
-}
 export async function getChunks(source, opts = {}) {
     const { data, filename } = await normalizeSource(source, opts);
     const o = resolveOpts(opts);
-    const ext = extOf(filename);
     const wasm = await loadWasm();
-    if (ext === "pdf") {
-        const conv = await pdfToMarkdown(data, opts.listImages === true);
-        if (opts.listImages) {
-            const raw = wasm.chunkPdfMarkdownWithImages(conv.markdown, conv.images.map((i) => ({ name: i.name, data: i.data })), conv.totalPages, o.mode, o.windowSize, o.overlap, o.sentencesPerChunk, o.paragraphsPerPage);
-            return { chunks: (raw.chunks ?? []).map(mapChunk), images: (raw.images ?? []).map(mapImage) };
-        }
-        const raw = wasm.chunkPdfMarkdown(conv.markdown, conv.totalPages, o.mode, o.windowSize, o.overlap, o.sentencesPerChunk, o.paragraphsPerPage);
-        return (raw ?? []).map(mapChunk);
-    }
     if (opts.listImages) {
         const raw = wasm.getChunksWithImages(data, filename, o.mode, o.windowSize, o.overlap, o.sentencesPerChunk, o.paragraphsPerPage);
         return { chunks: (raw.chunks ?? []).map(mapChunk), images: (raw.images ?? []).map(mapImage) };
@@ -217,15 +145,7 @@ export async function getChunks(source, opts = {}) {
 }
 export async function getMarkdown(source, opts = {}) {
     const { data, filename } = await normalizeSource(source, opts);
-    const ext = extOf(filename);
     const wasm = await loadWasm();
-    if (ext === "pdf") {
-        const conv = await pdfToMarkdown(data, opts.listImages === true);
-        // getChunks normalises inside the engine; do the same here so getMarkdown
-        // returns the identical string the other SDKs do.
-        const markdown = wasm.normalizePdfMarkdown(conv.markdown);
-        return opts.listImages ? { markdown, images: conv.images } : markdown;
-    }
     if (opts.listImages) {
         const raw = wasm.getMarkdownWithImages(data, filename);
         return { markdown: raw.markdown, images: (raw.images ?? []).map(mapImage) };
@@ -243,8 +163,10 @@ export async function* streamChunks(source, opts = {}) {
     }
 }
 /**
- * Chunk Markdown that was produced host-side for a PDF (e.g. by a separate PDF
- * parser). `totalPages` populates `document_metadata.total_pages`.
+ * Chunk Markdown that some *other* PDF parser produced. `.pdf` input is parsed
+ * by the engine itself — this is for callers who already have markdown of their
+ * own and want it chunked the same way. `totalPages` populates
+ * `document_metadata.total_pages`.
  */
 export async function chunkPdfMarkdown(markdown, totalPages, opts = {}) {
     const o = resolveOpts(opts);
