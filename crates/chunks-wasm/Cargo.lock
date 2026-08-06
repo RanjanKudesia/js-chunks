@@ -113,7 +113,7 @@ dependencies = [
 
 [[package]]
 name = "chunks-wasm"
-version = "0.1.0"
+version = "0.6.0"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
@@ -542,7 +542,7 @@ checksum = "973443cf09a9c8656b574a866ab68dfa19f0867d0340648c7d2f6a71b8a8ea68"
 
 [[package]]
 name = "rs-chunks"
-version = "0.1.0"
+version = "0.6.0"
 dependencies = [
  "base64",
  "calamine",

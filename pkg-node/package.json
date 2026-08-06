@@ -1,7 +1,7 @@
 {
   "name": "chunks-wasm",
   "description": "wasm-bindgen bindings for the rs-chunks document chunking engine",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "license": "MIT",
   "files": [
     "chunks_wasm_bg.wasm",
