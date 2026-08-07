@@ -7,13 +7,38 @@ import {
   getChunks,
   getMarkdown,
   chunkPdfMarkdown,
+  normalizePdfMarkdown,
   streamChunks,
+  ChunkError,
   type Chunk,
   type ChunkImage,
 } from "../src/index.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const FIXTURES = path.resolve(__dirname, "../../test_files");
+
+/**
+ * Fixture resolution, in order:
+ *  1. the full workspace corpus at ../../test_files, when present
+ *  2. the committed subset at test/fixtures/ (what CI uses)
+ *  3. fail loudly.
+ *
+ * Set JS_CHUNKS_FIXTURES=local to force the committed subset even when the
+ * corpus exists (used to verify the CI path locally).
+ */
+function resolveFixtures(): string {
+  if (process.env.JS_CHUNKS_FIXTURES !== "local") {
+    const corpus = path.resolve(__dirname, "../../test_files");
+    if (fs.existsSync(path.join(corpus, "md/test.md"))) return corpus;
+  }
+  const local = path.resolve(__dirname, "fixtures");
+  if (fs.existsSync(path.join(local, "md/test.md"))) return local;
+  throw new Error(
+    "No test fixtures found: neither the workspace corpus (../../test_files) " +
+      "nor the committed subset (test/fixtures/) is present.",
+  );
+}
+
+const FIXTURES = resolveFixtures();
 
 const MD_PATH = path.join(FIXTURES, "md/test.md");
 const DOCX_IMG_PATH = path.join(FIXTURES, "docx/all_round.docx");
@@ -48,7 +73,7 @@ function assertWellFormed(chunks: Chunk[]) {
   }
 }
 
-describe("chunks-js", () => {
+describe("js-chunks", () => {
   beforeAll(() => {
     DOCX_PATH = smallestDocx();
   });
@@ -101,6 +126,51 @@ describe("chunks-js", () => {
   it("rejects an unsupported extension", async () => {
     const bytes = new Uint8Array([1, 2, 3, 4]);
     await expect(getChunks(bytes, { filename: "data.xyz" })).rejects.toThrow();
+  });
+
+  it("throws ChunkError with kind 'unsupported' and the exact py-chunks message", async () => {
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    try {
+      await getChunks(bytes, { filename: "data.xyz" });
+      expect.unreachable("expected getChunks to throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ChunkError);
+      const err = e as ChunkError;
+      expect(err.name).toBe("ChunkError");
+      expect(err.kind).toBe("unsupported");
+      // Pins the ENGINE's message (unified across native/wasm in the 2026-08
+      // dispatch cleanup). py-chunks raises the same prefix from its own layer
+      // but appends ". Supported: [...]" — that suffix is Python-side, so exact
+      // cross-SDK parity for THIS case is prefix-level, not byte-level.
+      expect(err.message).toBe("Unsupported file type '.xyz'");
+    }
+  });
+
+  it("throws ChunkError with kind 'invalid-arg' and the exact engine message", async () => {
+    const bytes = fs.readFileSync(MD_PATH);
+    try {
+      await getChunks(bytes, {
+        filename: "test.md",
+        mode: "bogus" as unknown as import("../src/index.ts").ChunkMode,
+      });
+      expect.unreachable("expected getChunks to throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ChunkError);
+      const err = e as ChunkError;
+      expect(err.kind).toBe("invalid-arg");
+      // Pins the ENGINE's message verbatim. py-chunks validates modes in its
+      // Python layer first, so its message differs cosmetically (single quotes,
+      // sorted order) — parity for invalid-mode is kind+shape, not byte-level.
+      expect(err.message).toBe(
+        "mode must be one of [\"default\", \"structural\", \"section\", \"semantic\", \"sentence\", \"page_aware\", \"sliding_window\"] for MD, got: 'bogus'",
+      );
+    }
+  });
+
+  it("normalizePdfMarkdown returns a string", async () => {
+    const out = await normalizePdfMarkdown("# Title\n\nSome text.");
+    expect(typeof out).toBe("string");
+    expect(out.length).toBeGreaterThan(0);
   });
 
   it("streamChunks yields the same count as getChunks", async () => {
@@ -157,7 +227,7 @@ describe("chunks-js", () => {
     }
   });
 
-  it("getChunks parses a real PDF via liteparse-wasm", async () => {
+  it("getChunks parses a real PDF via the wasm engine", async () => {
     const chunks = await getChunks(PDF_PATH);
     assertWellFormed(chunks);
   });

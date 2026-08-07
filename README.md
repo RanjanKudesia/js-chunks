@@ -79,11 +79,34 @@ function getChunks(source, opts: { listImages: true }): Promise<{ chunks: Chunk[
 function getMarkdown(source, opts?): Promise<string>;
 function getMarkdown(source, opts: { listImages: true }): Promise<{ markdown: string; images: ChunkImage[] }>;
 function streamChunks(source, opts?): AsyncIterable<Chunk>;
+// For markdown some *other* PDF parser produced (.pdf input needs none of these):
 function chunkPdfMarkdown(markdown, totalPages, opts?): Promise<Chunk[]>;
+function chunkPdfMarkdownWithImages(markdown, images, totalPages, opts?): Promise<{ chunks: Chunk[]; images: ChunkImage[] }>;
+function normalizePdfMarkdown(markdown): Promise<string>;
 ```
 
 `source` may be a **string path** (Node/Bun only), `Uint8Array`, `ArrayBuffer`,
 Node `Buffer`, or `Blob`.
+
+## Errors
+
+Every engine failure is thrown as a `ChunkError` (a real `Error` subclass).
+Its `message` is **byte-identical** to the message `py-chunks` raises for the
+same input — the cross-SDK parity contract — and the variant py-chunks
+expresses as an exception *type* is restored on `kind`:
+
+```ts
+import { getChunks, ChunkError, type ChunkErrorKind } from "js-chunks";
+
+try {
+  await getChunks(bytes, { filename: "data.xyz" });
+} catch (e) {
+  if (e instanceof ChunkError) {
+    e.kind;    // "unsupported" | "invalid-arg" | "parse" | "io" | "unknown"
+    e.message; // exactly what py-chunks raises
+  }
+}
+```
 
 ## Images
 
@@ -109,26 +132,59 @@ If you already have PDF markdown from another parser, chunk it directly with
 
 ## Runtimes
 
-Works on **Node**, **Bun**, **Deno**, and **browsers/bundlers**. Node and Bun use
-the synchronous `pkg-node` build; browsers, Deno and bundlers load the
-async-instantiated `pkg-web` build (a `pkg-bundler` build ships for
-webpack/rollup/vite `import`). WASM instantiation is lazy and cached on first
-call. Filesystem paths are Node/Bun only — elsewhere pass bytes with a
-`filename`.
+Works on **Node**, **Bun**, **Deno**, and **browsers**. Node and Bun use the
+synchronous `pkg-node` build; Deno and unbundled browser ESM load the
+async-instantiated `pkg-web` build automatically. WASM instantiation is lazy
+and cached on first call. Filesystem paths are Node/Bun only — elsewhere pass
+bytes with a `filename`.
 
-In serverless/edge contexts, run on a **Node.js runtime** so the WASM module and
-the optional PDF peer dependency load. See
+This package is **ESM-only**. `require("js-chunks")` works on Node ≥ 20.19 and
+≥ 22.12 (which can `require()` ESM); on older Node use `import` / dynamic
+`import()`.
+
+In serverless/edge contexts, run on a **Node.js runtime** so the WASM module
+loads (PDF parsing happens inside the engine — there is no peer dependency).
+See
 **[framework integration](https://www.chunkengine.dev/docs/framework-integration/javascript)**
 for Express, Fastify, Hono, Next.js, NestJS, and SvelteKit handlers.
+
+## Bundlers (vite/webpack)
+
+The main entry's runtime auto-detection loads the web build through a dynamic
+import that is deliberately hidden from bundlers (`@vite-ignore`), so it only
+works where the import specifier resolves at runtime (Node, Bun, Deno,
+unbundled browser ESM). A **bundled** app would neither bundle the glue nor
+copy the `.wasm` binary — so bundled apps import the web build explicitly via
+the `js-chunks/web` subpath and serve `chunks_wasm_bg.wasm` as an asset:
+
+```ts
+import initWasm, * as engine from "js-chunks/web";
+// vite: resolve the wasm binary to a served asset URL
+import wasmUrl from "js-chunks/web/chunks_wasm_bg.wasm?url";
+
+await initWasm({ module_or_path: wasmUrl }); // once, cached
+const chunks = engine.getChunks(bytes, "report.docx", "default", 3, 1, 3, 15);
+```
+
+`js-chunks/web` is the raw wasm-bindgen surface: positional arguments, chunks
+as `{ content, content_type, metadata }` (snake_case), and an `init` default
+export that must be awaited before any call. If your bundler already rewrites
+`new URL("chunks_wasm_bg.wasm", import.meta.url)` inside the glue to an asset
+URL, plain `await initWasm()` works too — the explicit `?url` form above is
+the dependable one.
 
 ## Develop
 
 ```bash
 npm install
-npm run build:wasm   # wasm-pack -> pkg-node / pkg-web / pkg-bundler (needs Rust + wasm-pack)
+npm run build:wasm   # wasm-pack -> pkg-node / pkg-web (needs Rust + wasm-pack)
 npm run build        # tsc -> dist/
-npm test             # vitest against the real WASM
+npm test             # builds dist/, then vitest against the real WASM
 ```
+
+Tests resolve fixtures from the workspace corpus (`../test_files`) when
+present, else from the committed subset in `test/fixtures/` (what CI uses).
+Set `JS_CHUNKS_FIXTURES=local` to force the committed subset.
 
 ## License
 

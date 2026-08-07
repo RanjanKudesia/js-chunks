@@ -42,12 +42,17 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      - name: Build wasm (node/web/bundler) + TypeScript
+      - name: Build wasm (node/web) + TypeScript
         run: |
           npm run build:wasm
           npm run build
 
       - name: Test
+        # Fixture strategy: the full workspace corpus (test_files/) lives outside
+        # this repo, so in CI the suite resolves the committed subset at
+        # test/fixtures/ instead (see resolveFixtures in test/index.test.ts).
+        # This step is therefore genuinely green in CI, not silently skipped.
+        # `npm test` also builds dist/ first and smoke-tests the built entry.
         run: npm test
 
       - name: Publish

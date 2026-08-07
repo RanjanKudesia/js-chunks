@@ -9,9 +9,9 @@ license = "MIT"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# The engine, without native-only PDF (liteparse/PDFium/tokio). PDF is composed
-# host-side via @llamaindex/liteparse-wasm and fed to chunk_pdf_markdown.
-# Vendored INSIDE this package (crates/rs-chunks) so chunks-js builds standalone —
+# The engine, without native-only PDF rendering (PDFium/tokio). PDF *parsing*
+# happens in the engine itself, in wasm — same code as py-chunks/rs-chunks.
+# Vendored INSIDE this package (crates/rs-chunks) so js-chunks builds standalone —
 # no external sibling folder required. Keep in sync with the upstream rs-chunks crate.
 rs-chunks = { path = "../rs-chunks", default-features = false }
 wasm-bindgen = "0.2"

@@ -1,13 +1,12 @@
 /**
- * chunks-js — idiomatic TypeScript wrapper around the WASM-backed
+ * js-chunks — idiomatic TypeScript wrapper around the WASM-backed
  * `rs-chunks` document chunking engine.
  *
  * Output matches the py-chunks / rs-chunks reference engine.
  *
  * The WASM artifact is produced separately (not by this package's build) via:
  *   wasm-pack build --target nodejs   -> pkg-node   (Node, default here)
- *   wasm-pack build --target web      -> pkg-web    (browser / Deno)
- *   wasm-pack build --target bundler  -> pkg        (bundlers)
+ *   wasm-pack build --target web      -> pkg-web    (browser / Deno / bundlers via the "js-chunks/web" subpath)
  *
  * PDF is parsed by the engine itself, in wasm, exactly as py-chunks and
  * rs-chunks parse it — there is no host-side PDF parser and no optional peer
@@ -19,6 +18,25 @@ export interface Chunk {
     content: string;
     contentType: string;
     metadata: Record<string, unknown>;
+}
+/**
+ * The engine error variant, carried across the wasm boundary out-of-band so the
+ * message itself can stay byte-identical to what py-chunks raises:
+ *  - `"unsupported"` — unsupported extension / capability (py-chunks `ValueError`)
+ *  - `"invalid-arg"` — bad mode or parameter (py-chunks `ValueError`)
+ *  - `"parse"`       — the document failed to parse (py-chunks `RuntimeError`)
+ *  - `"io"`          — an I/O failure inside the engine
+ *  - `"unknown"`     — an error that carried no recognised variant tag
+ */
+export type ChunkErrorKind = "unsupported" | "invalid-arg" | "parse" | "io" | "unknown";
+/**
+ * Error thrown for every engine failure. `message` is byte-identical to the
+ * message py-chunks raises for the same input (the cross-SDK parity contract);
+ * `kind` restores the variant that py-chunks expresses as an exception *type*.
+ */
+export declare class ChunkError extends Error {
+    readonly kind: ChunkErrorKind;
+    constructor(message: string, kind: ChunkErrorKind);
 }
 /** An extracted embedded image: its markdown reference name and raw bytes. */
 export interface ChunkImage {
@@ -88,4 +106,22 @@ export declare function streamChunks(source: ChunkSource, opts?: ChunkOptions): 
  * `document_metadata.total_pages`.
  */
 export declare function chunkPdfMarkdown(markdown: string, totalPages: number, opts?: ChunkOptions): Promise<Chunk[]>;
+/**
+ * Like {@link chunkPdfMarkdown}, but with host-supplied PDF images: `images`
+ * entries are `{ name, data }` where `name` matches the `![](name)` reference
+ * in the markdown. Resolves to `{ chunks, images }` with image chunks first —
+ * the same shape `getChunks(..., { listImages: true })` returns.
+ *
+ * `.pdf` input is parsed (images included) by the engine itself — this exists
+ * for callers who parsed the PDF with some other tool and want identical
+ * chunking. It is also what the chunkengine.dev playground drives.
+ */
+export declare function chunkPdfMarkdownWithImages(markdown: string, images: ChunkImage[], totalPages: number, opts?: ChunkOptions): Promise<ChunksWithImages>;
+/**
+ * Apply the engine's PDF-markdown normalisation (author-block handling, etc.)
+ * to markdown a *host-side* PDF parser produced. {@link chunkPdfMarkdown}
+ * already normalises internally; use this when you need the normalised
+ * markdown string itself to match what `getMarkdown` would emit.
+ */
+export declare function normalizePdfMarkdown(markdown: string): Promise<string>;
 //# sourceMappingURL=index.d.ts.map

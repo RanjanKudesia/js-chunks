@@ -1,13 +1,12 @@
 /**
- * chunks-js — idiomatic TypeScript wrapper around the WASM-backed
+ * js-chunks — idiomatic TypeScript wrapper around the WASM-backed
  * `rs-chunks` document chunking engine.
  *
  * Output matches the py-chunks / rs-chunks reference engine.
  *
  * The WASM artifact is produced separately (not by this package's build) via:
  *   wasm-pack build --target nodejs   -> pkg-node   (Node, default here)
- *   wasm-pack build --target web      -> pkg-web    (browser / Deno)
- *   wasm-pack build --target bundler  -> pkg        (bundlers)
+ *   wasm-pack build --target web      -> pkg-web    (browser / Deno / bundlers via the "js-chunks/web" subpath)
  *
  * PDF is parsed by the engine itself, in wasm, exactly as py-chunks and
  * rs-chunks parse it — there is no host-side PDF parser and no optional peer
@@ -24,6 +23,65 @@ export interface Chunk {
   content: string;
   contentType: string;
   metadata: Record<string, unknown>;
+}
+
+/**
+ * The engine error variant, carried across the wasm boundary out-of-band so the
+ * message itself can stay byte-identical to what py-chunks raises:
+ *  - `"unsupported"` — unsupported extension / capability (py-chunks `ValueError`)
+ *  - `"invalid-arg"` — bad mode or parameter (py-chunks `ValueError`)
+ *  - `"parse"`       — the document failed to parse (py-chunks `RuntimeError`)
+ *  - `"io"`          — an I/O failure inside the engine
+ *  - `"unknown"`     — an error that carried no recognised variant tag
+ */
+export type ChunkErrorKind = "unsupported" | "invalid-arg" | "parse" | "io" | "unknown";
+
+const CHUNK_ERROR_KINDS: ReadonlySet<string> = new Set([
+  "unsupported",
+  "invalid-arg",
+  "parse",
+  "io",
+  "unknown",
+]);
+
+/**
+ * Error thrown for every engine failure. `message` is byte-identical to the
+ * message py-chunks raises for the same input (the cross-SDK parity contract);
+ * `kind` restores the variant that py-chunks expresses as an exception *type*.
+ */
+export class ChunkError extends Error {
+  readonly kind: ChunkErrorKind;
+
+  constructor(message: string, kind: ChunkErrorKind) {
+    super(message);
+    this.name = "ChunkError";
+    this.kind = kind;
+  }
+}
+
+/** Normalize whatever the wasm boundary threw into a ChunkError. */
+function toChunkError(e: unknown): ChunkError {
+  if (e instanceof ChunkError) return e;
+  if (typeof e === "string") return new ChunkError(e, "unknown");
+  if (e instanceof Error || (typeof e === "object" && e !== null && "message" in e)) {
+    const message = String((e as { message: unknown }).message);
+    const rawKind = (e as { kind?: unknown }).kind;
+    const kind: ChunkErrorKind =
+      typeof rawKind === "string" && CHUNK_ERROR_KINDS.has(rawKind)
+        ? (rawKind as ChunkErrorKind)
+        : "unknown";
+    return new ChunkError(message, kind);
+  }
+  return new ChunkError(String(e), "unknown");
+}
+
+/** Run a wasm call, rethrowing any failure as a typed {@link ChunkError}. */
+function wrapWasm<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (e) {
+    throw toChunkError(e);
+  }
 }
 
 /** An extracted embedded image: its markdown reference name and raw bytes. */
@@ -133,6 +191,17 @@ interface WasmModule {
     sentencesPerChunk: number,
     paragraphsPerPage: number,
   ) => RawChunk[];
+  chunkPdfMarkdownWithImages: (
+    markdown: string,
+    images: RawImage[],
+    totalPages: number,
+    mode: string,
+    windowSize: number,
+    overlap: number,
+    sentencesPerChunk: number,
+    paragraphsPerPage: number,
+  ) => RawChunksWithImages;
+  normalizePdfMarkdown: (markdown: string) => string;
 }
 
 interface RawChunk {
@@ -168,8 +237,17 @@ async function loadWasm(): Promise<WasmModule> {
       _wasm = require("../pkg-node/chunks_wasm.js") as WasmModule;
       return _wasm;
     }
-    // Browser / Deno / bundler: the web build exposes a default `init()` that
+    // Browser / Deno (unbundled): the web build exposes a default `init()` that
     // instantiates the wasm, plus the named exports.
+    //
+    // KNOWN LIMITATION — bundlers: `@vite-ignore` deliberately hides this
+    // dynamic import from bundlers (vite/webpack/rollup), so a *bundled*
+    // browser app neither bundles the glue nor copies chunks_wasm_bg.wasm,
+    // and this path 404s at runtime. Bundled apps must import the web build
+    // explicitly via the `js-chunks/web` subpath export and serve the .wasm
+    // asset — see "Bundlers (vite/webpack)" in the README. This auto-loader
+    // works as-is only where the specifier resolves at runtime (Node, Deno,
+    // unbundled browser ESM).
     const mod = (await import(
       /* @vite-ignore */ "../pkg-web/chunks_wasm.js"
     )) as unknown as WasmModule & { default: (arg?: unknown) => Promise<unknown> };
@@ -319,7 +397,22 @@ export async function getChunks(
   const wasm = await loadWasm();
 
   if (opts.listImages) {
-    const raw = wasm.getChunksWithImages(
+    const raw = wrapWasm(() =>
+      wasm.getChunksWithImages(
+        data,
+        filename,
+        o.mode,
+        o.windowSize,
+        o.overlap,
+        o.sentencesPerChunk,
+        o.paragraphsPerPage,
+      ),
+    );
+    return { chunks: (raw.chunks ?? []).map(mapChunk), images: (raw.images ?? []).map(mapImage) };
+  }
+
+  const raw = wrapWasm(() =>
+    wasm.getChunks(
       data,
       filename,
       o.mode,
@@ -327,18 +420,7 @@ export async function getChunks(
       o.overlap,
       o.sentencesPerChunk,
       o.paragraphsPerPage,
-    );
-    return { chunks: (raw.chunks ?? []).map(mapChunk), images: (raw.images ?? []).map(mapImage) };
-  }
-
-  const raw = wasm.getChunks(
-    data,
-    filename,
-    o.mode,
-    o.windowSize,
-    o.overlap,
-    o.sentencesPerChunk,
-    o.paragraphsPerPage,
+    ),
   );
   return (raw ?? []).map(mapChunk);
 }
@@ -363,10 +445,10 @@ export async function getMarkdown(
   const wasm = await loadWasm();
 
   if (opts.listImages) {
-    const raw = wasm.getMarkdownWithImages(data, filename);
+    const raw = wrapWasm(() => wasm.getMarkdownWithImages(data, filename));
     return { markdown: raw.markdown, images: (raw.images ?? []).map(mapImage) };
   }
-  return wasm.getMarkdown(data, filename);
+  return wrapWasm(() => wasm.getMarkdown(data, filename));
 }
 
 /**
@@ -396,14 +478,60 @@ export async function chunkPdfMarkdown(
 ): Promise<Chunk[]> {
   const o = resolveOpts(opts);
   const wasm = await loadWasm();
-  const raw = wasm.chunkPdfMarkdown(
-    markdown,
-    totalPages,
-    o.mode,
-    o.windowSize,
-    o.overlap,
-    o.sentencesPerChunk,
-    o.paragraphsPerPage,
+  const raw = wrapWasm(() =>
+    wasm.chunkPdfMarkdown(
+      markdown,
+      totalPages,
+      o.mode,
+      o.windowSize,
+      o.overlap,
+      o.sentencesPerChunk,
+      o.paragraphsPerPage,
+    ),
   );
   return (raw ?? []).map(mapChunk);
+}
+
+/**
+ * Like {@link chunkPdfMarkdown}, but with host-supplied PDF images: `images`
+ * entries are `{ name, data }` where `name` matches the `![](name)` reference
+ * in the markdown. Resolves to `{ chunks, images }` with image chunks first —
+ * the same shape `getChunks(..., { listImages: true })` returns.
+ *
+ * `.pdf` input is parsed (images included) by the engine itself — this exists
+ * for callers who parsed the PDF with some other tool and want identical
+ * chunking. It is also what the chunkengine.dev playground drives.
+ */
+export async function chunkPdfMarkdownWithImages(
+  markdown: string,
+  images: ChunkImage[],
+  totalPages: number,
+  opts: ChunkOptions = {},
+): Promise<ChunksWithImages> {
+  const o = resolveOpts(opts);
+  const wasm = await loadWasm();
+  const raw = wrapWasm(() =>
+    wasm.chunkPdfMarkdownWithImages(
+      markdown,
+      images,
+      totalPages,
+      o.mode,
+      o.windowSize,
+      o.overlap,
+      o.sentencesPerChunk,
+      o.paragraphsPerPage,
+    ),
+  );
+  return { chunks: (raw.chunks ?? []).map(mapChunk), images: (raw.images ?? []).map(mapImage) };
+}
+
+/**
+ * Apply the engine's PDF-markdown normalisation (author-block handling, etc.)
+ * to markdown a *host-side* PDF parser produced. {@link chunkPdfMarkdown}
+ * already normalises internally; use this when you need the normalised
+ * markdown string itself to match what `getMarkdown` would emit.
+ */
+export async function normalizePdfMarkdown(markdown: string): Promise<string> {
+  const wasm = await loadWasm();
+  return wrapWasm(() => wasm.normalizePdfMarkdown(markdown));
 }

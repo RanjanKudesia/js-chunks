@@ -1,6 +1,6 @@
 {
   "name": "js-chunks",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Idiomatic TypeScript/JS wrapper around a WASM-backed Rust document chunking engine for RAG — 36 file formats, images, and PDF; runs on Node, Bun, Deno, and browsers.",
   "type": "module",
   "author": "Ranjan Kudesia <ranjan.kudesia@gmail.com>",
@@ -20,24 +20,30 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
-    }
+    },
+    "./web": {
+      "types": "./pkg-web/chunks_wasm.d.ts",
+      "default": "./pkg-web/chunks_wasm.js"
+    },
+    "./web/chunks_wasm_bg.wasm": "./pkg-web/chunks_wasm_bg.wasm"
   },
+  "sideEffects": false,
   "files": [
     "dist",
     "pkg-node",
     "pkg-web",
-    "pkg-bundler",
+    "CHANGELOG.md",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build:wasm": "wasm-pack build crates/chunks-wasm --target nodejs --out-dir ../../pkg-node --out-name chunks_wasm && wasm-pack build crates/chunks-wasm --target web --out-dir ../../pkg-web --out-name chunks_wasm && wasm-pack build crates/chunks-wasm --target bundler --out-dir ../../pkg-bundler --out-name chunks_wasm && rm -f pkg-node/.gitignore pkg-web/.gitignore pkg-bundler/.gitignore",
+    "build:wasm": "wasm-pack build crates/chunks-wasm --target nodejs --out-dir ../../pkg-node --out-name chunks_wasm && wasm-pack build crates/chunks-wasm --target web --out-dir ../../pkg-web --out-name chunks_wasm && rm -f pkg-node/.gitignore pkg-web/.gitignore",
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
+    "test": "npm run build && vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run build:wasm && npm run build && npm run test"
+    "prepublishOnly": "npm run build:wasm && npm run test"
   },
-  "//": "WASM artifacts (pkg-node / pkg-web / pkg-bundler) are built via `npm run build:wasm` (requires the Rust toolchain + wasm-pack). PDF is parsed by the engine itself — there is no optional peer dependency.",
+  "//": "WASM artifacts (pkg-node / pkg-web) are built via `npm run build:wasm` (requires the Rust toolchain + wasm-pack). Bundled browser apps import the `js-chunks/web` subpath (pkg-web) and serve chunks_wasm_bg.wasm as an asset. PDF is parsed by the engine itself — there is no peer dependency. `npm test` builds dist/ first so the dist smoke test always runs against fresh output.",
   "keywords": [
     "chunking",
     "rag",

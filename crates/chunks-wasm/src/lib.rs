@@ -1,6 +1,7 @@
 //! wasm-bindgen bindings over `chunks-rs`. Bytes-in, JS-values-out. PDF is
-//! composed host-side (the JS layer parses PDF with `@llamaindex/liteparse-wasm`
-//! and calls [`chunk_pdf_markdown`]).
+//! parsed by the engine itself, in wasm — [`chunk_pdf_markdown`] /
+//! [`chunk_pdf_markdown_with_images`] exist only for callers that already have
+//! markdown from some *other* parser and want it chunked identically.
 
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
@@ -11,20 +12,33 @@ fn err_to_js<E: std::fmt::Display>(e: E) -> JsValue {
 }
 
 /// An engine error as the *message* py-chunks raises, without the variant
-/// prefix `Display` adds.
+/// prefix `Display` adds — thrown as a JS `Error` carrying the variant in a
+/// `kind` property (`"unsupported" | "invalid-arg" | "parse" | "io"`).
 ///
 /// `ChunkError`'s `Display` writes `parse error: …`, and py-chunks maps the
 /// variant onto an exception *type* and raises the bare message. Using `Display`
 /// here made every failure read differently in JavaScript than in Python for
 /// the same file — the [#78](TECH_DEBT.md)/[#79](TECH_DEBT.md) pattern, one
 /// level up, and invisible to every parity harness until the PDF js↔py sweep
-/// went looking for it.
+/// went looking for it. `Error.message` therefore stays byte-identical to the
+/// py-chunks message; the variant travels out-of-band in `kind`, which the TS
+/// layer maps onto `ChunkError`.
 fn engine_err_to_js(e: chunks_rs::ChunkError) -> JsValue {
     use chunks_rs::ChunkError::*;
-    JsValue::from_str(&match e {
-        Unsupported(m) | InvalidArg(m) | Parse(m) => m,
-        Io(e) => e.to_string(),
-    })
+    let (kind, msg) = match e {
+        Unsupported(m) => ("unsupported", m),
+        InvalidArg(m) => ("invalid-arg", m),
+        Parse(m) => ("parse", m),
+        Io(e) => ("io", e.to_string()),
+        // `ChunkError` is becoming #[non_exhaustive]; future variants surface
+        // with their full Display (no bare-message rule is known for them yet).
+        #[allow(unreachable_patterns)]
+        other => ("unknown", other.to_string()),
+    };
+    let err = js_sys::Error::new(&msg);
+    // Non-fatal if this ever fails: the message alone is still correct.
+    let _ = js_sys::Reflect::set(&err, &JsValue::from_str("kind"), &JsValue::from_str(kind));
+    err.into()
 }
 
 /// Serialize to JS with maps rendered as plain objects (so `chunk.metadata` is a
@@ -123,7 +137,8 @@ pub fn get_markdown_with_images(data: &[u8], filename: &str) -> Result<JsValue, 
     Ok(obj.into())
 }
 
-/// Chunk PDF markdown produced host-side (e.g. by `@llamaindex/liteparse-wasm`).
+/// Chunk PDF markdown a host-side parser already produced (`.pdf` bytes are
+/// parsed by the engine itself — this is for callers with their own markdown).
 /// `total_pages` populates `document_metadata.total_pages`.
 #[wasm_bindgen(js_name = chunkPdfMarkdown)]
 #[allow(clippy::too_many_arguments)]
