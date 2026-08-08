@@ -30,9 +30,22 @@ export interface Chunk {
  */
 export type ChunkErrorKind = "unsupported" | "invalid-arg" | "parse" | "io" | "unknown";
 /**
- * Error thrown for every engine failure. `message` is byte-identical to the
- * message py-chunks raises for the same input (the cross-SDK parity contract);
- * `kind` restores the variant that py-chunks expresses as an exception *type*.
+ * Error thrown for every failure this package raises — engine failures *and*
+ * host-side argument validation, so `catch (e) { if (e instanceof ChunkError) }`
+ * is a complete contract.
+ *
+ * For engine failures `message` is byte-identical to the message py-chunks
+ * raises for the same input (the cross-SDK parity contract), and `kind`
+ * restores the variant that py-chunks expresses as an exception *type*.
+ *
+ * Host-side validation (a filesystem path off Node, an unsupported `source`
+ * type, byte input with no filename) never reaches the engine, so it has no
+ * py-chunks counterpart; it is reported with `kind: "invalid-arg"`.
+ *
+ * Reading a path on Node happens host-side too. A missing or unreadable file
+ * is reported with `kind: "io"` and Node's own message (`ENOENT: no such file
+ * or directory, open './missing.md'`), matching the variant the engine uses
+ * when it does the read itself.
  */
 export declare class ChunkError extends Error {
     readonly kind: ChunkErrorKind;
@@ -95,8 +108,18 @@ export declare function getMarkdown(source: ChunkSource, opts: ChunkOptions & {
     listImages: true;
 }): Promise<MarkdownWithImages>;
 /**
- * Stream chunks one at a time. Computes the full array (the engine is
- * synchronous), then yields each chunk — same results as {@link getChunks}.
+ * Yield chunks one at a time as an `AsyncGenerator`.
+ *
+ * **This is an ergonomic wrapper, not incremental streaming.** The wasm
+ * boundary is a synchronous full-parse: this computes the complete array via
+ * {@link getChunks} and *then* yields its elements. Results are identical to
+ * {@link getChunks}, and so is peak memory — the whole document and the whole
+ * chunk list are in memory before the first `yield`. Use it for `for await`
+ * ergonomics and for interleaving downstream work with iteration, not to
+ * bound memory on a large file.
+ *
+ * (`rs-chunks` and `py-chunks` do have truly incremental streaming for some
+ * formats; wasm does not — see the README.)
  */
 export declare function streamChunks(source: ChunkSource, opts?: ChunkOptions): AsyncGenerator<Chunk, void, unknown>;
 /**

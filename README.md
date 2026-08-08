@@ -32,7 +32,7 @@ for (const c of chunks) {
 const bytes = new Uint8Array(await file.arrayBuffer());
 await getChunks(bytes, { filename: "report.docx" });
 
-// Streaming
+// Iterate chunk by chunk (ergonomic wrapper — see "Streaming" below)
 for await (const chunk of streamChunks("./big.md", { mode: "section" })) {
   handle(chunk);
 }
@@ -90,9 +90,11 @@ Node `Buffer`, or `Blob`.
 
 ## Errors
 
-Every engine failure is thrown as a `ChunkError` (a real `Error` subclass).
-Its `message` is **byte-identical** to the message `py-chunks` raises for the
-same input — the cross-SDK parity contract — and the variant py-chunks
+**Every** failure this package raises is a `ChunkError` (a real `Error`
+subclass) — engine failures and host-side argument validation alike, so a
+single `instanceof ChunkError` catch is the complete contract. For engine
+failures the `message` is **byte-identical** to the message `py-chunks` raises
+for the same input — the cross-SDK parity contract — and the variant py-chunks
 expresses as an exception *type* is restored on `kind`:
 
 ```ts
@@ -103,10 +105,32 @@ try {
 } catch (e) {
   if (e instanceof ChunkError) {
     e.kind;    // "unsupported" | "invalid-arg" | "parse" | "io" | "unknown"
-    e.message; // exactly what py-chunks raises
+    e.message; // for engine errors, exactly what py-chunks raises
   }
 }
 ```
+
+Argument validation that never reaches the engine — a filesystem path off
+Node, an unsupported `source` type, byte input with no filename — has no
+py-chunks counterpart and is reported as `kind: "invalid-arg"`.
+
+## Streaming
+
+`streamChunks` is an **ergonomic wrapper, not incremental streaming.** The
+WASM boundary is a synchronous full-parse, so it computes the complete chunk
+array and *then* yields the elements one at a time:
+
+```ts
+for await (const chunk of streamChunks("./big.docx")) { … }
+// identical results — and identical peak memory — to:
+for (const chunk of await getChunks("./big.docx")) { … }
+```
+
+Use it for `for await` ergonomics and to interleave downstream work (embedding,
+upserting) with iteration — not to bound memory on a large file. `rs-chunks`
+and `py-chunks` do offer genuinely incremental streaming for some formats;
+WASM does not, and closing that gap would be an engine redesign rather than a
+wrapper change.
 
 ## Images
 

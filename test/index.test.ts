@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,6 +58,14 @@ function smallestDocx(): string {
 }
 
 let DOCX_PATH: string;
+
+/**
+ * Push a deliberately-wrong runtime value into the typed `opts` slot.
+ * These tests exist precisely because JS callers are not bound by the types.
+ */
+function badOpts(value: unknown): undefined {
+  return value as undefined;
+}
 
 function assertWellFormed(chunks: Chunk[]) {
   expect(Array.isArray(chunks)).toBe(true);
@@ -121,6 +129,318 @@ describe("js-chunks", () => {
   it("rejects byte sources without a filename", async () => {
     const bytes = new Uint8Array(fs.readFileSync(MD_PATH));
     await expect(getChunks(bytes)).rejects.toThrow(/filename is required/i);
+  });
+
+  // Host-side argument validation never reaches the engine, but it must still
+  // be a ChunkError so `catch (e instanceof ChunkError)` is the COMPLETE
+  // contract for this package. Messages are pinned verbatim — they are part of
+  // the public surface and predate the ChunkError wrapping.
+  describe("host-side validation throws ChunkError", () => {
+    it("missing filename for a byte source", async () => {
+      const bytes = new Uint8Array(fs.readFileSync(MD_PATH));
+      try {
+        await getChunks(bytes);
+        expect.unreachable("expected getChunks to throw");
+      } catch (e) {
+        expect(e).toBeInstanceOf(ChunkError);
+        const err = e as ChunkError;
+        expect(err.name).toBe("ChunkError");
+        expect(err.kind).toBe("invalid-arg");
+        expect(err.message).toBe(
+          "A filename is required for byte sources (pass opts.filename or a named Blob) so the engine can route by extension.",
+        );
+      }
+    });
+
+    it("a Blob with no name and no opts.filename", async () => {
+      const blob = new Blob([fs.readFileSync(MD_PATH)]);
+      try {
+        await getChunks(blob);
+        expect.unreachable("expected getChunks to throw");
+      } catch (e) {
+        expect(e).toBeInstanceOf(ChunkError);
+        expect((e as ChunkError).kind).toBe("invalid-arg");
+      }
+    });
+
+    it("an unsupported source type", async () => {
+      try {
+        await getChunks(42 as unknown as Parameters<typeof getChunks>[0]);
+        expect.unreachable("expected getChunks to throw");
+      } catch (e) {
+        expect(e).toBeInstanceOf(ChunkError);
+        const err = e as ChunkError;
+        expect(err.kind).toBe("invalid-arg");
+        expect(err.message).toBe(
+          "Unsupported source: expected a string path, Uint8Array, ArrayBuffer, Buffer, or Blob.",
+        );
+      }
+    });
+
+    it("a path that does not exist", async () => {
+      // The filesystem read sat outside the wrapping, so ENOENT escaped as
+      // Node's own Error and `instanceof ChunkError` was false for the single
+      // most common failure a caller hits.
+      try {
+        await getChunks("./definitely-not-here.md");
+        expect.unreachable("expected getChunks to throw");
+      } catch (e) {
+        expect(e).toBeInstanceOf(ChunkError);
+        const err = e as ChunkError;
+        expect(err.name).toBe("ChunkError");
+        expect(err.kind).toBe("io");
+        // Node's own message is preserved — it names the path.
+        expect(err.message).toContain("ENOENT");
+        expect(err.message).toContain("definitely-not-here.md");
+      }
+    });
+
+    it("getMarkdown validates the same way", async () => {
+      const bytes = new Uint8Array(fs.readFileSync(MD_PATH));
+      await expect(getMarkdown(bytes)).rejects.toBeInstanceOf(ChunkError);
+    });
+
+    it("a filesystem path off Node", async () => {
+      // `isNode` is evaluated once at module load and excludes Deno, so load a
+      // fresh copy of the module with a fake `Deno` global to exercise the
+      // non-Node path branch.
+      vi.resetModules();
+      vi.stubGlobal("Deno", { version: { deno: "test" } });
+      try {
+        const fresh = (await import("../src/index.ts")) as typeof import("../src/index.ts");
+        try {
+          await fresh.getChunks(MD_PATH);
+          expect.unreachable("expected getChunks to throw");
+        } catch (e) {
+          expect(e).toBeInstanceOf(fresh.ChunkError);
+          const err = e as InstanceType<typeof fresh.ChunkError>;
+          expect(err.name).toBe("ChunkError");
+          expect(err.kind).toBe("invalid-arg");
+          expect(err.message).toBe(
+            "Filesystem paths are only supported on Node. Pass a Uint8Array/ArrayBuffer/Blob with opts.filename instead.",
+          );
+        }
+      } finally {
+        vi.unstubAllGlobals();
+        vi.resetModules();
+      }
+    });
+  });
+
+  // The options object is caller-controlled: it can be `null`, not an object at
+  // all, or carry getters that throw. Each of these escaped the ChunkError
+  // contract as a raw TypeError / the caller's own error.
+  describe("the options object never escapes the ChunkError contract", () => {
+    async function expectChunkError(
+      run: () => Promise<unknown>,
+      kind: ChunkError["kind"],
+      message?: string | RegExp,
+    ): Promise<ChunkError> {
+      try {
+        await run();
+        return expect.unreachable("expected a ChunkError") as never;
+      } catch (e) {
+        expect(e).toBeInstanceOf(ChunkError);
+        const err = e as ChunkError;
+        expect(err.kind).toBe(kind);
+        if (typeof message === "string") expect(err.message).toBe(message);
+        else if (message) expect(err.message).toMatch(message);
+        return err;
+      }
+    }
+
+    it("getChunks(bytes, null) is a ChunkError, not a TypeError", async () => {
+      const bytes = new Uint8Array(fs.readFileSync(MD_PATH));
+      await expectChunkError(
+        () => getChunks(bytes, badOpts(null)),
+        "invalid-arg",
+        /filename is required/i,
+      );
+    });
+
+    it("getMarkdown(bytes, null) is a ChunkError, not a TypeError", async () => {
+      const bytes = new Uint8Array(fs.readFileSync(MD_PATH));
+      await expectChunkError(
+        () => getMarkdown(bytes, badOpts(null)),
+        "invalid-arg",
+        /filename is required/i,
+      );
+    });
+
+    it("null options on a path source mean 'no options'", async () => {
+      assertWellFormed(await getChunks(MD_PATH, badOpts(null)));
+    });
+
+    it("a non-object options argument is rejected by name", async () => {
+      await expectChunkError(
+        () => getChunks(MD_PATH, badOpts(42)),
+        "invalid-arg",
+        "opts must be an object, got number.",
+      );
+    });
+
+    it("a throwing getter on opts becomes a ChunkError", async () => {
+      const opts = {
+        get windowSize(): number {
+          throw new Error("boom");
+        },
+      };
+      await expectChunkError(
+        () => getChunks(MD_PATH, badOpts(opts)),
+        "invalid-arg",
+        /^opts\.windowSize could not be read: boom$/,
+      );
+    });
+
+    it("streamChunks does not let a throwing getter escape either", async () => {
+      // `{ ...opts }` invoked the getter, so this escaped even though
+      // streamChunks reads no option itself.
+      const opts = {
+        get mode(): string {
+          throw new Error("boom");
+        },
+      };
+      await expectChunkError(
+        async () => {
+          for await (const _c of streamChunks(MD_PATH, badOpts(opts))) {
+            // unreachable
+          }
+        },
+        "invalid-arg",
+        /^opts\.mode could not be read: boom$/,
+      );
+    });
+
+    it("a Blob whose arrayBuffer() rejects becomes a ChunkError", async () => {
+      class BrokenBlob extends Blob {
+        override arrayBuffer(): Promise<ArrayBuffer> {
+          return Promise.reject(new Error("blob read failed"));
+        }
+      }
+      const blob = new BrokenBlob([fs.readFileSync(MD_PATH)]);
+      // Failing to read the source's bytes is the same condition the path
+      // branch reports as `io`.
+      await expectChunkError(
+        () => getChunks(blob, { filename: "test.md" }),
+        "io",
+        "blob read failed",
+      );
+    });
+  });
+
+  // The wasm boundary takes `usize`, so these were coerced instead of
+  // rejected: -1 returned chunks, 2.5 truncated, "3" coerced, and a non-string
+  // filename/mode surfaced as kind "unknown" with "memory access out of
+  // bounds".
+  describe("numeric and type validation of options", () => {
+    const cases: Array<[string, Record<string, unknown>, string]> = [
+      ["windowSize: -1", { windowSize: -1 }, "window_size must be greater than 0"],
+      [
+        "sentencesPerChunk: -1",
+        { sentencesPerChunk: -1 },
+        "sentences_per_chunk must be greater than 0",
+      ],
+      [
+        "paragraphsPerPage: -1",
+        { paragraphsPerPage: -1 },
+        "paragraphs_per_page must be greater than 0",
+      ],
+      ["overlap: -1", { overlap: -1 }, "overlap must not be negative, got -1."],
+      ["windowSize: 2.5", { windowSize: 2.5 }, "windowSize must be an integer, got 2.5."],
+      ["windowSize: '3'", { windowSize: "3" }, "windowSize must be a number, got string."],
+      ["windowSize: NaN", { windowSize: NaN }, "windowSize must be a number, got number."],
+      ["filename: 42", { filename: 42 }, "filename must be a string, got number."],
+      ["mode: 42", { mode: 42 }, "mode must be a string, got number."],
+    ];
+
+    for (const [label, opts, message] of cases) {
+      it(`rejects ${label} with the ChunkError contract`, async () => {
+        try {
+          await getChunks(MD_PATH, badOpts(opts));
+          expect.unreachable("expected getChunks to throw");
+        } catch (e) {
+          expect(e).toBeInstanceOf(ChunkError);
+          const err = e as ChunkError;
+          expect(err.kind).toBe("invalid-arg");
+          expect(err.message).toBe(message);
+        }
+      });
+    }
+
+    it("overlap: 0 stays legal", async () => {
+      assertWellFormed(await getChunks(MD_PATH, { mode: "sliding_window", windowSize: 3, overlap: 0 }));
+    });
+  });
+
+  // EPUB never ran the shared argument check, so bad arguments produced an
+  // EMPTY ARRAY instead of an error. Driven through the bytes route with
+  // deliberately unparseable bytes: validation runs before any parsing, so the
+  // check is proven without needing a real book in the committed fixture set.
+  describe("EPUB validates its mode arguments", () => {
+    const notAnEpub = new Uint8Array([1, 2, 3, 4]);
+
+    it("rejects overlap >= windowSize instead of returning []", async () => {
+      try {
+        await getChunks(notAnEpub, {
+          filename: "x.epub",
+          mode: "sliding_window",
+          windowSize: 100,
+          overlap: 100,
+        });
+        expect.unreachable("expected getChunks to throw");
+      } catch (e) {
+        expect(e).toBeInstanceOf(ChunkError);
+        expect((e as ChunkError).kind).toBe("invalid-arg");
+        expect((e as ChunkError).message).toBe("overlap must be less than window_size");
+      }
+    });
+
+    it("rejects an unknown mode with the engine's per-format sentence", async () => {
+      try {
+        await getChunks(notAnEpub, {
+          filename: "x.epub",
+          mode: "nope" as unknown as import("../src/index.ts").ChunkMode,
+        });
+        expect.unreachable("expected getChunks to throw");
+      } catch (e) {
+        expect(e).toBeInstanceOf(ChunkError);
+        expect((e as ChunkError).kind).toBe("invalid-arg");
+        expect((e as ChunkError).message).toMatch(/^mode must be one of \[.*\] for EPUB, got: 'nope'$/);
+      }
+    });
+
+    it("rejects paragraphsPerPage = 0 in page_aware mode", async () => {
+      try {
+        await getChunks(notAnEpub, {
+          filename: "x.epub",
+          mode: "page_aware",
+          paragraphsPerPage: 0,
+        });
+        expect.unreachable("expected getChunks to throw");
+      } catch (e) {
+        expect(e).toBeInstanceOf(ChunkError);
+        expect((e as ChunkError).kind).toBe("invalid-arg");
+        expect((e as ChunkError).message).toBe("paragraphs_per_page must be greater than 0");
+      }
+    });
+  });
+
+  // The spreadsheet family paginates by rows_per_chunk, so paragraphsPerPage
+  // was dropped at the mapping site and `page_aware` + 0 was silently accepted.
+  it("rejects paragraphsPerPage = 0 for the spreadsheet family", async () => {
+    const notAnXlsx = new Uint8Array([1, 2, 3, 4]);
+    try {
+      await getChunks(notAnXlsx, {
+        filename: "x.xlsx",
+        mode: "page_aware",
+        paragraphsPerPage: 0,
+      });
+      expect.unreachable("expected getChunks to throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ChunkError);
+      expect((e as ChunkError).kind).toBe("invalid-arg");
+      expect((e as ChunkError).message).toBe("paragraphs_per_page must be greater than 0");
+    }
   });
 
   it("rejects an unsupported extension", async () => {

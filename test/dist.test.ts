@@ -52,4 +52,14 @@ describe("dist smoke", () => {
     // Typed errors survive the build too.
     expect(typeof dist.ChunkError).toBe("function");
   });
+
+  it("built dist entry throws ChunkError for host-side validation", async () => {
+    const dist = (await import(DIST)) as typeof import("../src/index.ts");
+    const bytes = new Uint8Array(fs.readFileSync(fixturePath("md/test.md")));
+    const err = await dist
+      .getChunks(bytes) // no filename
+      .then(() => undefined, (e: unknown) => e);
+    expect(err).toBeInstanceOf(dist.ChunkError);
+    expect((err as InstanceType<typeof dist.ChunkError>).kind).toBe("invalid-arg");
+  });
 });
