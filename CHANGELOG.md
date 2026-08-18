@@ -2,6 +2,59 @@
 
 All notable changes to the `js-chunks` npm package.
 
+## [Unreleased]
+
+## [0.6.3] - 2026-08-18
+
+### Added
+- **`fitTokens(chunks, counter, budget, opts?)`** — re-fits `getChunks` output
+  to a token budget using **your** tokenizer (`gpt-tokenizer`, a transformers.js
+  tokenizer, any `(text) => number`). It is the JS counterpart of py-chunks'
+  `fit_tokens`, and closes the one capability gap the SDKs had.
+
+  It guarantees no chunk exceeds the budget on all 36 formats while keeping
+  `contentType` and `metadata` — including the repeated table headers that make
+  a retrieved row interpretable. Options: `minTokens`, `merge`, `split`,
+  `mergeMetadata`, `oversize`, `respectBoundaries`, `boundaryKeys`. Split parts
+  carry `fit_part` / `fit_total`. Inputs are never mutated.
+
+  It is the only synchronous export here — pure TypeScript, no wasm, no I/O — so
+  it behaves identically in Node, Bun, Deno and the browser. It is
+  **deliberately parity-exempt**: output depends on the counter you pass, so it
+  is not part of the byte-identical cross-SDK contract. Bad arguments throw
+  `ChunkError` with `kind: "invalid-arg"`, like every other host-side check.
+
+### Changed
+- An unrecognised `split` / `merge` / `mergeMetadata` / `oversize` value is now
+  rejected instead of silently falling through to a default. A typo such as
+  `split: "sentances"` used to quietly select the hard whitespace split — a
+  different chunking strategy, applied without complaint. py-chunks validates
+  the same four options the same way.
+- `ChunkError` moved to its own module and is re-exported unchanged from the
+  entry point, so a pure host-side helper can throw it without importing the
+  wasm-backed module. No public API change.
+- **Empty documents return `[]` instead of throwing** for `.txt`, `.html` and
+  `.md`, matching `.docx`/`.ppt`/`.xlsx`. A structurally invalid file still
+  throws a typed `ChunkError`. Engine change, so it applies to all three SDKs.
+- **CSV/TSV encoding now auto-detects.** UTF-8 is tried strictly first, so
+  anything that already decoded is byte-identical; detection only runs where the
+  old code threw. A latin-1 CSV now reads like a latin-1 `.txt`.
+
+### Fixed
+
+- **HTML that is not UTF-8 now decodes** instead of throwing or returning
+  mojibake. An HTML document is read using its own declared encoding: BOM, then
+  valid UTF-8, then `<meta charset=…>`, then detection. Valid UTF-8 always wins
+  over a conflicting declaration, so nothing that already worked changes.
+  Engine change — applies to all three SDKs.
+
+- A malformed `.xls` could drive unbounded allocation and kill the host process.
+  The spreadsheet reader was upgraded; the same upgrade fixed four parsing
+  defects (custom number formats, stray carriage returns in cell text, an ODS
+  column offset, and one XLSB file that would not open).
+- Spreadsheet `semantic` mode had no size bound and could emit a
+  2.9-million-character chunk; it now respects the 1,500-character cap.
+
 ## [0.6.2] - 2026-08-08
 
 - **The options object can no longer escape the `ChunkError` contract.** Four
