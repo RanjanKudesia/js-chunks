@@ -50,7 +50,14 @@ jobs:
       - name: Vendored engine must match rs-chunks
         # crates/rs-chunks is a vendored copy kept in step by sync_engine.sh. A
         # copy nothing checks is a copy that drifts — that drift produced
-        # TECH_DEBT #74/#75/#76. The script lives one level up in the workspace
-        # and is not part of this repo, so this only runs where it is present.
-        if: ${{ hashFiles('../sync_engine.sh') != '' }}
-        run: ../sync_engine.sh
+        # TECH_DEBT #74/#75/#76. The script lives one level up in the WORKSPACE
+        # and is not part of this repo. `hashFiles` cannot express that: it
+        # ERRORS on paths outside the checkout rather than returning empty
+        # (caught by CI's first-ever run), so the existence check lives in the
+        # shell, where a missing sibling is an ordinary skip.
+        run: |
+          if [ -x ../sync_engine.sh ]; then
+            ../sync_engine.sh
+          else
+            echo "sync_engine.sh not present (bare CI clone) — drift check skipped"
+          fi
