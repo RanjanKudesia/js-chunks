@@ -1,6 +1,6 @@
 {
   "name": "js-chunks",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Idiomatic TypeScript/JS wrapper around a WASM-backed Rust document chunking engine for RAG — 36 file formats, images, and PDF; runs on Node, Bun, Deno, and browsers.",
   "type": "module",
   "author": "Ranjan Kudesia <ranjan.kudesia@gmail.com>",

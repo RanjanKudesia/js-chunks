@@ -2,7 +2,7 @@
   "name": "chunks-wasm",
   "type": "module",
   "description": "wasm-bindgen bindings for the rs-chunks document chunking engine",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "license": "MIT",
   "files": [
     "chunks_wasm_bg.wasm",

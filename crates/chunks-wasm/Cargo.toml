@@ -1,6 +1,6 @@
 [package]
 name = "chunks-wasm"
-version = "0.6.2"
+version = "0.6.3"
 edition = "2021"
 description = "wasm-bindgen bindings for the rs-chunks document chunking engine"
 license = "MIT"

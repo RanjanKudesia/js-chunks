@@ -1,0 +1,56 @@
+name: CI
+
+# Tier 1 of the two-tier plan (TECH_DEBT X1). This repo is the best-placed of
+# the three: J2 committed a 2.8 MB fixture subset, so vitest gives REAL coverage
+# on CI rather than skipping like the Rust and Python suites do.
+
+on:
+  pull_request:
+  push:
+    branches: [main, master, trunk]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: build:wasm · build · vitest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build WASM
+        run: npm run build:wasm
+
+      - name: Build package
+        run: npm run build
+
+      - name: Vitest
+        # `npm test` builds first and includes the stale-dist guard from J11.
+        run: npm test
+
+      - name: Vendored engine must match rs-chunks
+        # crates/rs-chunks is a vendored copy kept in step by sync_engine.sh. A
+        # copy nothing checks is a copy that drifts — that drift produced
+        # TECH_DEBT #74/#75/#76. The script lives one level up in the workspace
+        # and is not part of this repo, so this only runs where it is present.
+        if: ${{ hashFiles('../sync_engine.sh') != '' }}
+        run: ../sync_engine.sh
